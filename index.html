@@ -1003,9 +1003,11 @@
       view.B = libFor(ep.n2);
       var aStart = view.A.epochs[0], aEnd = view.A.epochs[view.A.epochs.length - 1];
       var bStart = view.B.epochs[0], bEnd = view.B.epochs[view.B.epochs.length - 1];
-      // The axis covers everything the dataset holds for the pair (union of the
-      // two histories); it is never narrowed to the reported episode dates.
-      view.t0 = Math.min(aStart, bStart);
+      // The plot starts where both objects actually have TLEs, so the left-hand
+      // side is never a stretch where one of them is pure extrapolation. The end
+      // stays at the widest coverage of the pair.
+      var overlapStart = Math.max(aStart, bStart), overlapEnd = Math.min(aEnd, bEnd);
+      view.t0 = overlapStart < overlapEnd ? overlapStart : Math.min(aStart, bStart);
       view.t1 = Math.max(aEnd, bEnd);
       view.hoverMs = null;
       buildSeries();
