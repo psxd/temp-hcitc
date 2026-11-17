@@ -1219,10 +1219,25 @@
       var tdw = document.createElement("td");
       var inp = document.createElement("input");
       inp.className = "chap-width";
-      inp.type = "number"; inp.step = "0.5"; inp.min = "0.1";
+      // Hours exactly as typed: no day conversion, and "any" with min 0 so a
+      // whole number (2, 24, 30 ...) is a valid value instead of an invalid one
+      // that the browser refuses to commit.
+      inp.type = "number"; inp.step = "any"; inp.min = "0";
+      inp.inputMode = "decimal";
       inp.placeholder = "hours";
       inp.value = rec ? fmtHours(rec.widthH) : "";
       inp.setAttribute("aria-label", "Chapter " + (c + 1) + " width in hours");
+      // Keystrokes go straight into the chapter record; the box is not rewritten
+      // while typing so a half-typed "1.5" survives.
+      inp.addEventListener("input", (function (idx, el) {
+        return function () {
+          var s = chapterStore(), r = s[idx];
+          if (!r) return;
+          var v = parseFloat(el.value);
+          if (isFinite(v) && v > 0) r.widthH = v;
+        };
+      })(c, inp));
+      // Leaving the box (blur, Enter, Tab) stores the hours and tidies the text.
       inp.addEventListener("change", (function (idx, el) {
         return function () {
           var s = chapterStore(), r = s[idx];
@@ -1232,6 +1247,9 @@
           el.value = fmtHours(r.widthH);
         };
       })(c, inp));
+      inp.addEventListener("keydown", function (ev) {
+        if (ev.key === "Enter") { ev.preventDefault(); this.blur(); }
+      });
       tdw.appendChild(inp);
       row.appendChild(tdw);
     }
