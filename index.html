@@ -512,8 +512,9 @@
     };
   }
   // Every timestamp is propagated from the nearest TLE of each object, however
-  // far away that epoch is: the curve is continuous over the whole axis and the
-  // amber shading marks where both element sets are more than 3 days old.
+  // far away that epoch is: the curve is continuous over the whole axis. The
+  // availability strip above the plot shows only the archive's own element sets,
+  // so wherever its bar is missing the plotted position is extrapolation.
   function pairAt(A, B, ms) {
     var ia = nearestIndex(A.epochs, ms), ib = nearestIndex(B.epochs, ms);
     var a = stateAt(A, ms, ia), b = stateAt(B, ms, ib);
@@ -655,26 +656,13 @@
   }
 
   // ---------------------------------------------------- TLE availability strip
-  // Two thin rows above the plot, one per object, filled wherever the archive
-  // holds element sets for it. A run is broken only where consecutive TLEs are
-  // more than three days apart, so a hole in the archive reads as a gap in the
-  // bar while the ordinary 8-hour cadence reads as solid coverage.
+  // Two thin rows above the plot, one per object: one coloured tick at every TLE
+  // epoch the archive holds for that satellite, across the whole timeline. There
+  // is no merging, padding or gap rule -- a tick sits exactly on an element epoch
+  // and nowhere else, so an hour-by-hour cadence merges into a solid bar at
+  // screen resolution while a sparse one stays visibly dashed, one tick per
+  // element set, and the dark run beyond the last epoch is extrapolation.
   var STRIP = { top: 6, rowH: 9, gap: 3 };
-  var RUN_GAP = 3 * DAY;
-
-  function coverageRuns(lib) {
-    if (lib.runs) return lib.runs;
-    var e = lib.epochs, runs = [];
-    if (e.length) {
-      var start = e[0], prev = e[0];
-      for (var i = 1; i < e.length; i++) {
-        if (e[i] - prev > RUN_GAP) { runs.push([start, prev]); start = e[i]; }
-        prev = e[i];
-      }
-      runs.push([start, prev]);
-    }
-    return (lib.runs = runs);
-  }
 
   function fitLabel(ctx, text, maxW) {
     if (!text) return "";
@@ -698,11 +686,16 @@
       ctx.fillRect(plot.x0, y, plot.x1 - plot.x0, STRIP.rowH);
       if (row.lib) {
         ctx.fillStyle = row.colour;
-        coverageRuns(row.lib).forEach(function (run) {
-          var a = Math.max(run[0], view.t0), b = Math.min(run[1], view.t1);
-          if (b <= a) return;
-          ctx.fillRect(msToX(a), y, Math.max(1, msToX(b) - msToX(a)), STRIP.rowH);
-        });
+        var e = row.lib.epochs, wide = 1 / chart.dpr, lastX = -Infinity;
+        for (var i = 0; i < e.length; i++) {
+          if (e[i] < view.t0 || e[i] > view.t1) continue;
+          var x = Math.round(msToX(e[i]) / wide) * wide;
+          if (x < plot.x0) x = plot.x0;
+          else if (x > plot.x1 - wide) x = plot.x1 - wide;
+          if (x === lastX) continue;            // several epochs in one pixel column
+          lastX = x;
+          ctx.fillRect(x, y, wide, STRIP.rowH);
+        }
       }
       ctx.fillStyle = "#666666"; ctx.textAlign = "right";
       var name = row.lib ? (row.lib.obj.name || ("NORAD " + row.lib.obj.norad)) : "";
