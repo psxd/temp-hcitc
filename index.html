@@ -127,6 +127,7 @@
   .stat .v { font-size: 26px; font-weight: 800; color: #222222; margin-top: 2px; letter-spacing: -0.015em; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .stat .v small { font-size: 12px; font-weight: 600; color: var(--color-text-muted); margin-left: 4px; letter-spacing: 0; }
   .stat .sub { font-size: 11px; color: var(--color-text-muted); margin-top: 2px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .stat .v .unc { font-size: 12px; font-weight: 600; color: var(--color-text-muted); margin-left: 6px; letter-spacing: 0; }
   .stat.miss .v { color: #111111; }
   .stat.vel .v { color: #111111; }
 
@@ -301,12 +302,12 @@
                 <div class="handle" id="handleStart" tabindex="0" role="slider" aria-label="Window start"></div>
                 <div class="handle" id="handleEnd" tabindex="0" role="slider" aria-label="Window end"></div>
               </div>
-              <div class="slider-scale"><span id="scaleStart"></span><span id="scaleMid"></span><span id="scaleEnd"></span></div>
+              <div class="slider-scale" id="sliderScale"><span id="scaleStart"></span><span id="scaleMid"></span><span id="scaleEnd"></span></div>
               <div class="legend">
-                <span><i style="background:#1977AD"></i>separation distance (SGP4) · band = min/max per pixel column</span>
+                <span><i style="background:#1977AD"></i>separation distance (SGP4)</span>
+                <span><i style="background:rgba(25,119,173,.28);height:10px;border:1px solid rgba(25,119,173,.45)"></i>± uncertainty band around the curve (1 km + 2 km/day per object)</span>
                 <span><i style="background:rgba(234,170,0,.35);height:10px"></i>selected window</span>
                 <span><i style="background:#E69F00"></i>closest approach in window</span>
-                <span id="legendSparse"><i style="background:rgba(230,159,0,.45)"></i>no element within 3 days of the sample · 30+ days is left blank</span>
               </div>
             </div>
 
@@ -420,6 +421,11 @@
     return (a / DAY).toFixed(1) + " d";
   }
   function dist(a, b) { return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]); }
+  // Position uncertainty model: 1 km at the element epoch, growing 2 km per day
+  // of propagation either side of it (same both ways), summed over both objects.
+  function sigmaForAge(ageMs) { return 1 + 2 * Math.abs(ageMs) / DAY; }
+  function sigmaKm(ageA, ageB) { return sigmaForAge(ageA) + sigmaForAge(ageB); }
+  function fmtSigma(km) { return (km < 10 ? km.toFixed(1) : String(Math.round(km))).replace(/\.0$/, ""); }
 
   // -------------------------------------------------------- reported windows
   // The CSV mixes ISO dates, YYYY-MM, plain years and free text ("approx.",
@@ -485,13 +491,11 @@
       v: [res.velocity.x, res.velocity.y, res.velocity.z]
     };
   }
-  // An element set stops being evidence for an orbit long before 30 days. Past
-  // that the sample is dropped before propagating, so the chart shows a gap
-  // instead of a value invented by propagating for months or years.
-  var MAX_AGE = 30 * DAY;
+  // Every timestamp is propagated from the nearest TLE of each object, however
+  // far away that epoch is: the curve is continuous over the whole axis and the
+  // amber shading marks where both element sets are more than 3 days old.
   function pairAt(A, B, ms) {
     var ia = nearestIndex(A.epochs, ms), ib = nearestIndex(B.epochs, ms);
-    if (Math.abs(ms - A.epochs[ia]) > MAX_AGE || Math.abs(ms - B.epochs[ib]) > MAX_AGE) return null;
     var a = stateAt(A, ms, ia), b = stateAt(B, ms, ib);
     if (!a || !b) return null;
     return { ms: ms, km: dist(a.r, b.r), mps: dist(a.v, b.v) * 1000, a: a, b: b };
@@ -517,18 +521,15 @@
     var span = view.t1 - view.t0;
     view.step = span > 900 * DAY ? 30 * MIN : STEP;
     if (span / view.step > 500000) view.step = Math.ceil(span / 500000 / MIN) * MIN;
-    var ms = [], km = [], mps = [], ia = [], ib = [], sparse = [], gaps = [], sparseRuns = [];
-    var n = 0, minIndex = -1, gapStart = null, sparseStart = null;
+    var ms = [], km = [], mps = [], ia = [], ib = [], sig = [], gaps = [];
+    var n = 0, minIndex = -1, gapStart = null;
     for (var t = view.t0; ; t += view.step) {
       var at = Math.min(t, view.t1);
       var s = pairAt(view.A, view.B, at);
       if (s) {
         if (gapStart !== null) { gaps.push([gapStart, at]); gapStart = null; }
         ms.push(at); km.push(s.km); mps.push(s.mps); ia.push(s.a.i); ib.push(s.b.i);
-        var isSparse = Math.max(Math.abs(s.a.age), Math.abs(s.b.age)) > SPARSE_AGE;
-        sparse.push(isSparse ? 1 : 0);
-        if (isSparse) { if (sparseStart === null) sparseStart = at; }
-        else if (sparseStart !== null) { sparseRuns.push([sparseStart, at]); sparseStart = null; }
+        sig.push(sigmaKm(s.a.age, s.b.age));
         if (minIndex < 0 || s.km < km[minIndex]) minIndex = n;
         n++;
       } else if (gapStart === null) {
@@ -537,8 +538,7 @@
       if (at >= view.t1) break;
     }
     if (gapStart !== null) gaps.push([gapStart, view.t1]);
-    if (sparseStart !== null && ms.length) sparseRuns.push([sparseStart, ms[ms.length - 1] + view.step]);
-    view.series = { ms: ms, km: km, mps: mps, ia: ia, ib: ib, sparse: sparse, gaps: gaps, sparseRuns: sparseRuns, minIndex: minIndex };
+    view.series = { ms: ms, km: km, mps: mps, ia: ia, ib: ib, sig: sig, gaps: gaps, minIndex: minIndex };
     pickCache.key = "";
     pickCache.key = "";
   }
@@ -606,6 +606,15 @@
     plot.hi = Math.log10(Math.max(maxKm * 1.15, 10));
     plot.hiLinear = maxKm * 1.08;
     plot.minKm = minKm; plot.maxKm = maxKm;
+    alignSlider();
+  }
+
+  // The scrub slider lives in the same box as the canvas, so giving it the plot's
+  // left/right insets as margins makes its handle centres travel exactly x0 -> x1.
+  function alignSlider() {
+    var el = $("slider"), sc = $("sliderScale");
+    if (el) { el.style.marginLeft = chart.pad.l + "px"; el.style.marginRight = chart.pad.r + "px"; }
+    if (sc) { sc.style.marginLeft = chart.pad.l + "px"; sc.style.marginRight = chart.pad.r + "px"; }
   }
 
   function axisTicks() {
@@ -631,22 +640,7 @@
     bctx.setTransform(chart.dpr, 0, 0, chart.dpr, 0, 0);
     bctx.clearRect(0, 0, chart.w, chart.h);
 
-    // sparse shading: samples whose nearest element is 3-30 days old. Drawn from
-    // explicit runs so a run never bleeds across a stretch with no data at all.
-    bctx.fillStyle = "rgba(230,159,0,0.16)";
-    (S.sparseRuns || []).forEach(function (r) {
-      var rx = Math.max(plot.x0, msToX(r[0])), rw = Math.min(plot.x1, msToX(r[1])) - rx;
-      if (rw > 0.5) bctx.fillRect(rx, plot.y0, rw, plot.y1 - plot.y0);
-    });
     var k;
-
-    // No element within 30 days of the sample: nothing is propagated there, so
-    // the region is shaded and left blank rather than filled with an invented value.
-    bctx.fillStyle = "rgba(230,159,0,0.45)";
-    (S.gaps || []).forEach(function (g) {
-      var gx = Math.max(plot.x0, msToX(g[0])), gw = Math.min(plot.x1, msToX(g[1])) - gx;
-      if (gw > 0.5) bctx.fillRect(gx, plot.y1 - 5, gw, 5);
-    });
 
     // grid
     bctx.strokeStyle = "#e8e8e8"; bctx.lineWidth = 1;
@@ -699,21 +693,42 @@
     // of the samples inside it. The shape and every spike survive, and the path
     // stays at about one segment per pixel instead of hundreds of thousands.
     var cols = Math.max(1, Math.round(plot.x1 - plot.x0));
-    var colLo = new Float64Array(cols).fill(Infinity), colHi = new Float64Array(cols).fill(-Infinity);
+    var colLo = new Float64Array(cols).fill(Infinity);
+    var colSig = new Float64Array(cols);
     for (k = 0; k < S.ms.length; k++) {
       var col = Math.floor(msToX(S.ms[k]) - plot.x0);
       if (col < 0) col = 0; else if (col >= cols) col = cols - 1;
       if (S.km[k] < colLo[col]) colLo[col] = S.km[k];
-      if (S.km[k] > colHi[col]) colHi[col] = S.km[k];
+      var sigK = (S.sig && S.sig[k]) || 0;
+      if (sigK > colSig[col]) colSig[col] = sigK;
     }
-    // filled band between the per-column extremes, then a bright line along the
-    // per-column minima (the closest the pair got inside each column)
+    // The line is the per-column minimum. The per-column min/max fill is gone:
+    // at a fast dive it covered a whole column and read as a pale blue wash.
     var started = false, ca, cx;
-    bctx.fillStyle = "rgba(25,119,173,0.22)";
-    for (ca = 0; ca < cols; ca++) {
-      if (colHi[ca] === -Infinity) continue;
-      var yTop = kmToY(colHi[ca]), yBot = kmToY(colLo[ca]);
-      bctx.fillRect(plot.x0 + ca, yTop, 1, Math.max(1, yBot - yTop));
+
+    // Uncertainty band, centred on the plotted line so it clearly sits above and
+    // below it: +/- (1 + 2*dA) + (1 + 2*dB) km, d being each element set's
+    // propagation age. Hatched so it reads as a range over the envelope fill
+    // instead of merging with it.
+    var bandLo = Math.pow(10, plot.lo), c1;
+    var bandTop = new Float64Array(cols).fill(NaN), bandBot = new Float64Array(cols).fill(NaN);
+    for (c1 = 0; c1 < cols; c1++) {
+      if (colLo[c1] === Infinity || !colSig[c1]) continue;
+      bandTop[c1] = colLo[c1] + colSig[c1];
+      bandBot[c1] = Math.max(colLo[c1] - colSig[c1], bandLo);
+    }
+    // A band of a few km is thinner than a pixel on a three-decade axis, so the
+    // drawn half-height never drops below MIN_HALF px: the range stays visible on
+    // both sides of the curve at every separation, and grows once the real
+    // uncertainty exceeds that floor.
+    var MIN_HALF = 3;
+    bctx.fillStyle = "rgba(25,119,173,0.28)";
+    for (c1 = 0; c1 < cols; c1++) {
+      if (bandTop[c1] !== bandTop[c1]) continue;
+      var yLine = kmToY(colLo[c1]);
+      var bty = Math.min(kmToY(bandTop[c1]), yLine - MIN_HALF);
+      var bby = Math.max(kmToY(bandBot[c1]), yLine + MIN_HALF);
+      bctx.fillRect(plot.x0 + c1, bty, 1, Math.max(1, bby - bty));
     }
 
     // the closest approach inside each column, with a break wherever the data stops
@@ -836,7 +851,9 @@
       $("dupFlag").classList.add("hidden");
       return;
     }
-    $("statMiss").innerHTML = fmtKm(pick.km) + "<small>km</small>";
+    var sigPick = sigmaKm(pick.a.age, pick.b.age);
+    $("statMiss").innerHTML = fmtKm(pick.km) + "<small>km</small>" +
+      "<span class=\"unc\">± " + fmtSigma(sigPick) + " km</span>";
     $("statMissSub").textContent = isoMin(pick.ms) + " UTC";
     $("statVel").innerHTML = fmtMps(pick.mps) + "<small>m/s</small>";
     $("statVelSub").textContent = pick.mps < 1000 ? "at closest approach" : (pick.mps / 1000).toFixed(2) + " km/s at closest approach";
@@ -1029,7 +1046,6 @@
       $("scaleStart").textContent = isoDay(view.t0);
       $("scaleMid").textContent = isoDay((view.t0 + view.t1) / 2);
       $("scaleEnd").textContent = isoDay(view.t1);
-      $("legendSparse").classList.toggle("hidden", view.series.sparse.indexOf(1) < 0 && (view.series.gaps || []).length === 0);
 
       setWindow(winStart, winEnd);
       resize();
@@ -1045,8 +1061,7 @@
         "<li>Axis: <code>" + isoMin(view.t0) + "Z</code> → <code>" + isoMin(view.t1) + "Z</code> — the widest range the dataset holds for either object. " +
         "The reported episode dates are never used as a filter; they only drive the “Show reported window” button. " +
         view.series.ms.length.toLocaleString("en-US") + " samples at " + Math.round(view.step / MIN) + "-minute steps.</li>" +
-        "<li>Where only one object has elements, nothing is propagated more than 30 days past its nearest TLE: those stretches are shaded amber and left blank, " +
-        "so the axis can show the whole dataset without inventing positions.</li>" +
+        "<li>Nothing is cut off: where one object has no elements for a stretch, its state comes from its nearest TLE — however far away that epoch is — and the amber shading plus the wide ± band show how much propagation that sample rests on.</li>" +
         "<li>" + LA.obj.name + " (<code>" + LA.obj.cospar + "</code>) history: " + LA.tles.length.toLocaleString("en-US") + " TLEs, " + isoDay(aStart) + " → " + isoDay(aEnd) + ".</li>" +
         "<li>" + LB.obj.name + " (<code>" + LB.obj.cospar + "</code>) history: " + LB.tles.length.toLocaleString("en-US") + " TLEs, " + isoDay(bStart) + " → " + isoDay(bEnd) + ".</li>" +
         "<li>Every element of both histories in this span is used; each sample is propagated with SGP4 from the <b>nearest available TLE</b> — forward when the sample is after that epoch, backward when it is before — " +
@@ -1054,8 +1069,8 @@
         "<li>Elements come from the project archive <code>EPFD/data/gso_tles.db</code>, used in full, " +
         LA.tles.length.toLocaleString("en-US") + " + " + LB.tles.length.toLocaleString("en-US") + " of them).</li>" +
         "<li>The closest approach inside the window is refined by rescanning ±" + Math.round(view.step / MIN) + " min around the best sample at 10 s, then ±10 s at 1 s, with the same propagator.</li>" +
-        "<li>Miss distance is the straight-line TEME range in km; relative velocity is the magnitude of the inertial velocity difference in m/s.</li>" +
-        "<li>Samples whose nearest epoch is more than 3 days away (TLE gaps) are shaded amber and flagged in the provenance panel.</li>";
+        "<li>Uncertainty: each object contributes 1 km at its own element epoch plus 2 km for every day it is propagated away from that epoch (the same both forward and backward); the two are added, so the shaded band is ±(1+2t<sub>A</sub>)+(1+2t<sub>B</sub>) km and a sample where both elements are fresh is ±2 km.</li>" +
+        "<li>Miss distance is the straight-line TEME range in km; relative velocity is the magnitude of the inertial velocity difference in m/s.</li>";
     }, 30);
   }
 
