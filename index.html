@@ -351,11 +351,6 @@
           </section>
         </div>
 
-        <!-- method notes -->
-        <section class="card notes" style="margin-top:16px">
-          <h3>How the history is produced</h3>
-          <ul id="methodNotes"></ul>
-        </section>
       </div>
     </main>
   </div>
@@ -1056,21 +1051,6 @@
         ? "moves both handles to the reported start and end"
         : "reported dates fall outside the available TLE coverage";
 
-      var LA = view.A, LB = view.B;
-      $("methodNotes").innerHTML =
-        "<li>Axis: <code>" + isoMin(view.t0) + "Z</code> → <code>" + isoMin(view.t1) + "Z</code> — the widest range the dataset holds for either object. " +
-        "The reported episode dates are never used as a filter; they only drive the “Show reported window” button. " +
-        view.series.ms.length.toLocaleString("en-US") + " samples at " + Math.round(view.step / MIN) + "-minute steps.</li>" +
-        "<li>Nothing is cut off: where one object has no elements for a stretch, its state comes from its nearest TLE — however far away that epoch is — and the amber shading plus the wide ± band show how much propagation that sample rests on.</li>" +
-        "<li>" + LA.obj.name + " (<code>" + LA.obj.cospar + "</code>) history: " + LA.tles.length.toLocaleString("en-US") + " TLEs, " + isoDay(aStart) + " → " + isoDay(aEnd) + ".</li>" +
-        "<li>" + LB.obj.name + " (<code>" + LB.obj.cospar + "</code>) history: " + LB.tles.length.toLocaleString("en-US") + " TLEs, " + isoDay(bStart) + " → " + isoDay(bEnd) + ".</li>" +
-        "<li>Every element of both histories in this span is used; each sample is propagated with SGP4 from the <b>nearest available TLE</b> — forward when the sample is after that epoch, backward when it is before — " +
-        "with the <code>satellite.js</code> build shipped by the proximity-viz dataset. No TLE is interpolated or invented.</li>" +
-        "<li>Elements come from the project archive <code>EPFD/data/gso_tles.db</code>, used in full, " +
-        LA.tles.length.toLocaleString("en-US") + " + " + LB.tles.length.toLocaleString("en-US") + " of them).</li>" +
-        "<li>The closest approach inside the window is refined by rescanning ±" + Math.round(view.step / MIN) + " min around the best sample at 10 s, then ±10 s at 1 s, with the same propagator.</li>" +
-        "<li>Uncertainty: each object contributes 1 km at its own element epoch plus 2 km for every day it is propagated away from that epoch (the same both forward and backward); the two are added, so the shaded band is ±(1+2t<sub>A</sub>)+(1+2t<sub>B</sub>) km and a sample where both elements are fresh is ±2 km.</li>" +
-        "<li>Miss distance is the straight-line TEME range in km; relative velocity is the magnitude of the inertial velocity difference in m/s.</li>";
     }, 30);
   }
 
